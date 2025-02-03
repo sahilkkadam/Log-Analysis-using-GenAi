@@ -11,3 +11,6 @@ langchain-community
 chromadb
 ollama
 streamlit
+numpy
+matplotlib
+seaborn
