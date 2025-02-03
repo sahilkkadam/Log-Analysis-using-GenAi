@@ -222,3 +222,189 @@ def extract_text(file_path):
     except Exception as e:
         print(f"Error extracting text: {e}")
         return ""
+
+# Function to chunk text into smaller pieces
+def chunk_text(text, chunk_size=1000, chunk_overlap=50):
+    """
+    Splits text into smaller chunks for better processing.
+
+    Args:
+        text (str): The text to be split.
+        chunk_size (int): The size of each chunk.
+        chunk_overlap (int): The overlap between chunks.
+
+    Returns:
+        List[str]: List of text chunks.
+    """
+    try:
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+        doc_output = splitter.split_documents([Document(page_content=text)])
+        # print(doc_output)
+        # Convert the Document objects to a list of strings
+        result = [doc.page_content for doc in doc_output]
+        # print(result)
+        return result
+    except Exception as e:
+        print(f"Error chunking text: {e}")
+        return []
+
+# Store embeddings in ChromaDB
+def chromadb_vector_store(embeddings, paragraphs, collection_name):
+    """
+    Stores embeddings in a ChromaDB collection.
+
+    Args:
+        embeddings (List): List of embeddings to store.
+        paragraphs (List[str]): List of text paragraphs corresponding to the embeddings.
+        collection_name (str): Name of the ChromaDB collection.
+
+    Returns:
+        chromadb.Collection: The collection where embeddings are stored.
+    """
+    try:
+        client = chromadb.HttpClient(host='localhost', port=8001)  # ChromaDB port
+        collection = client.get_or_create_collection(
+            name=collection_name, metadata={"hnsw:space": "cosine"})
+
+        # Add embeddings to the collection
+        n = len(paragraphs)
+        collection.add(
+            ids=[str(id) for id in range(n)],
+            embeddings=[embedding for embedding in embeddings],
+            documents=[paragraph for paragraph in paragraphs],
+            metadatas=[{"doc_id": i} for i in range(n)],
+        )
+
+        print("Stored embeddings in ChromaDB collection")
+        return collection
+    except Exception as e:
+        print(f"Error storing embeddings in ChromaDB: {e}")
+        return None
+    
+# Generate a hash from an input string
+def generate_hash(input_string):
+    """
+    Generates a SHA-256 hash from a string.
+
+    Args:
+        input_string (str): The input string to hash.
+
+    Returns:
+        str: The resulting hash.
+    """
+    try:
+        hash_object = hashlib.sha256(input_string.encode())
+        return hash_object.hexdigest()
+    except Exception as e:
+        print(f"Error generating hash: {e}")
+        return ""
+
+# Hash map to keep track of file metadata
+file_hash_map = {}
+
+# Add file metadata to the hash map
+def add_to_hash_map(file_name):
+    """
+    Adds file metadata to the hash map by generating a hash.
+
+    Args:
+        file_name (str): The name of the file.
+    """
+    try:
+        file_hash_map[file_name] = generate_hash(file_name)
+    except Exception as e:
+        print(f"Error adding to hash map: {e}")
+
+# Load and save embeddings using JSON files
+def save_embeddings(filename, embeddings):
+    """
+    Save embeddings to a JSON file.
+
+    Parameters:
+    filename (str): The name of the file to save the embeddings to.
+    embeddings (List[List[float]]): The embeddings to save.
+    """
+    try:
+        if not os.path.exists("embeddings"):
+            os.makedirs("embeddings")
+        with open(f"embeddings/{filename}.json", "w") as f:
+            json.dump(embeddings, f)
+    except Exception as e:
+        print(f"Error saving embeddings: {e}")
+
+def load_embeddings(filename):
+    """
+    Load embeddings from a JSON file.
+
+    Parameters:
+    filename (str): The name of the file to load the embeddings from.
+
+    Returns:
+    List[List[float]]: The loaded embeddings, or False if loading fails.
+    """
+    try:
+        if not os.path.exists(f"embeddings/{filename}.json"):
+            return False
+        with open(f"embeddings/{filename}.json", "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading embeddings: {e}")
+        return False
+
+# Function to get or generate embeddings
+def get_embeddings(filename, modelname, chunks):
+    """
+    Get or generate embeddings for the provided chunks of text.
+
+    Parameters:
+    filename (str): The name of the file associated with the embeddings.
+    modelname (str): The name of the model to use for generating embeddings.
+    chunks (List[str]): The chunks of text to generate embeddings for.
+
+    Returns:
+    List[List[float]]: The embeddings for the provided chunks.
+    """
+    try:
+        if (embeddings := load_embeddings(filename)) is not False:
+            return embeddings
+        embeddings = [
+            ollama.embeddings(model=modelname, prompt=chunk)["embedding"]
+            for chunk in chunks
+        ]
+        save_embeddings(filename, embeddings)
+        return embeddings
+    except Exception as e:
+        print(f"Error getting embeddings: {e}")
+        return []
+
+# Function to combine results and pick top 7 chunks
+def combine_and_select_top_chunks(results_list, top_n=7):
+    """
+    Combine results from multiple collections and select the top N chunks based on similarity.
+
+    Parameters:
+    results_list (List[dict]): A list of results from different collections.
+    top_n (int): The number of top chunks to select. Default is 7.
+
+    Returns:
+    List[str]: The top N chunks of text.
+    """
+    try:    
+        combined_results = []
+        for result in results_list:
+            distances = result.get("distances", [])[0]
+            documents = result.get("documents", [])[0]
+            combined_results.extend(zip(distances, documents))
+        
+        # Sort combined results by distance (similarity score)
+        combined_results.sort(key=lambda x: x[0])
+        
+        # Select top N results
+        top_chunks = [doc for _, doc in combined_results[:top_n]]
+        return top_chunks
+    except Exception as e:
+        print(f"Error combining and selecting top chunks: {e}")
+        return []
